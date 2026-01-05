@@ -2,6 +2,7 @@ import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as net from 'node:net';
 import * as path from 'node:path';
+import { watch, type FSWatcher as ChokidarWatcher } from 'chokidar';
 
 export interface DaemonState {
     output: string;
@@ -35,7 +36,7 @@ export class SvelteCheckDaemon {
     private lineBuffer: string = '';
     private workspacePath: string;
     private tsconfigPath: string | undefined;
-    private routeFileWatcher: fs.FSWatcher | null = null;
+    private routeFileWatcher: ChokidarWatcher | null = null;
     private gitHeadWatcher: fs.FSWatcher | null = null;
     private syncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -56,8 +57,8 @@ export class SvelteCheckDaemon {
         this.startGitHeadWatcher();
         await this.startServer();
 
-        process.on('SIGINT', () => this.shutdown());
-        process.on('SIGTERM', () => this.shutdown());
+        process.on('SIGINT', async () => await this.shutdown());
+        process.on('SIGTERM', async () => await this.shutdown());
     }
 
     private startGitHeadWatcher(): void {
@@ -98,23 +99,28 @@ export class SvelteCheckDaemon {
     }
 
     private startRouteFileWatcher(): void {
-        this.routeFileWatcher = fs.watch(
-            this.workspacePath,
-            { recursive: true },
-            (_eventType, filename) => {
-                if (filename && /\/\+[^/]+\.ts$/.test(filename)) {
-                    if (this.syncDebounceTimer) {
-                        clearTimeout(this.syncDebounceTimer);
-                    }
-                    this.syncDebounceTimer = setTimeout(() => {
-                        spawnSync('svelte-kit', ['sync'], {
-                            cwd: this.workspacePath,
-                            stdio: 'inherit'
-                        });
-                    }, 250);
+        // Use chokidar for cross-platform recursive watching
+        // (fs.watch recursive option doesn't work on Linux)
+        this.routeFileWatcher = watch(this.workspacePath, {
+            ignored: ['**/node_modules/**', '**/.git/**'],
+            persistent: true,
+            ignoreInitial: true,
+        });
+
+        this.routeFileWatcher.on('all', (_event, filePath) => {
+            // Check if it's a SvelteKit route file (+page.ts, +layout.ts, etc.)
+            if (/\/\+[^/]+\.ts$/.test(filePath)) {
+                if (this.syncDebounceTimer) {
+                    clearTimeout(this.syncDebounceTimer);
                 }
+                this.syncDebounceTimer = setTimeout(() => {
+                    spawnSync('svelte-kit', ['sync'], {
+                        cwd: this.workspacePath,
+                        stdio: 'inherit'
+                    });
+                }, 250);
             }
-        );
+        });
     }
 
     private startSvelteCheck(): void {
@@ -226,12 +232,12 @@ export class SvelteCheckDaemon {
         }
     }
 
-    private shutdown(): void {
+    private async shutdown(): Promise<void> {
         if (this.syncDebounceTimer) {
             clearTimeout(this.syncDebounceTimer);
         }
         if (this.routeFileWatcher) {
-            this.routeFileWatcher.close();
+            await this.routeFileWatcher.close();
         }
         if (this.gitHeadWatcher) {
             this.gitHeadWatcher.close();

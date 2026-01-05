@@ -2,7 +2,7 @@
     "name": "@ampcode/svelte-check-daemon",
     "publisher": "ampcode",
     "description": "A daemon for svelte-check that caches results for faster type checking",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "packageManager": "pnpm@10.24.0",
     "license": "Apache-2.0",
     "type": "module",
@@ -37,6 +37,9 @@
     },
     "peerDependencies": {
         "svelte-check": ">=4.0.0"
+    },
+    "dependencies": {
+        "chokidar": "^4.0.0"
     },
     "devDependencies": {
         "@types/node": "^20.0.0",
